@@ -1,0 +1,35 @@
+---
+- name: Push my SSH Public Key to all VMs
+  # Target the 'all_vms' group defined in your inventory
+  hosts: k3s_cluster
+  # Become 'root' or use 'sudo' to ensure you can write to the user's .ssh directory
+  become: yes
+  
+  # Variables for easy customization
+  vars:
+    # 1. The user on the remote VMs you want to log in as (e.g., 'ubuntu', 'ec2-user', 'vagrant')
+    remote_user: csellers 
+    # 2. The local path to your public key file on the control node
+    local_public_key_path: ~/.ssh/authorized_keys.pub 
+
+  tasks:
+    - name: Ensure SSH directory exists for the remote user
+      # 'file' module ensures the directory exists and has correct permissions
+      ansible.builtin.file:
+        path: "/home/{{ remote_user }}/.ssh"
+        state: directory
+        owner: "{{ remote_user }}"
+        group: "{{ remote_user }}"
+        mode: '0700' # Essential: .ssh directory must have 700 permissions
+
+    - name: Add the public key to authorized_keys
+      ansible.posix.authorized_key:
+        # The user on the remote host whose authorized_keys file will be modified
+        user: "{{ remote_user }}"
+        # The content of the key to be added. 
+        # The 'lookup' function reads the content of your local public key file.
+        key: "{{ lookup('file', local_public_key_path) }}"
+        # 'state: present' ensures the key is in the file.
+        state: present
+        # If true, the key will be added, but existing keys will be untouched.
+        exclusive: false

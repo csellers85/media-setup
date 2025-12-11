@@ -13,7 +13,7 @@
       become: true
       ansible.builtin.reboot:
         reboot_command: "{{ custom_reboot_command | default(omit) }}"
-        reboot_timeout: 3600
+        reboot_timeout: 120
 
 - name: Revert changes to Proxmox cluster
   hosts: proxmox
