@@ -1,0 +1,50 @@
+---
+- name: Sync All Cluster Storage (ZFS, NFS, and SMB)
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Install required storage utilities
+      apt:
+        name: 
+          - nfs-common
+          - cifs-utils
+        state: present
+        update_cache: yes
+
+    - name: Create all mount point directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0777'
+      loop:
+        - /mnt/k3s/zfs-proxmox
+        - /mnt/k3s/nfs-share
+        - /mnt/k3s/smb-share
+
+    # 1. THE PROXMOX ZFS SHARE
+    - name: Mount Proxmox ZFS Share
+      mount:
+        path: /mnt/k3s/zfs-proxmox
+        src: "192.168.2.60:/services"
+        fstype: nfs4
+        opts: "_netdev,auto,nfsvers=4.2,rw,hard,intr,noatime"
+        state: mounted
+
+    # 2. THE SECONDARY NFS SHARE (WDRED)
+    - name: Mount WDRED NFS Share
+      mount:
+        path: /mnt/k3s/nfs-share
+        src: "192.168.2.21:/mnt/WDRED5TB/nfs-share"
+        fstype: nfs4
+        opts: "_netdev,auto,nfsvers=4.2,rw,hard,intr,noatime"
+        state: mounted
+
+    # 3. THE SMB/PLEX SHARE
+    - name: Mount Plex SMB Share
+      mount:
+        path: /mnt/k3s/smb-share
+        src: "//192.168.2.21/Plex"
+        fstype: cifs
+        opts: "uid=1000,gid=1000,username=plex,password=1234,file_mode=0777,dir_mode=0777,_netdev"
+        state: mounted
