@@ -1,0 +1,44 @@
+---
+- name: Force SSH Key via Existing Cloud-Init Snippet
+  hosts: k3s_cluster
+  connection: local
+  gather_facts: false
+
+  vars:
+    pve_api_url: "https://192.168.20.20:8006/api2/json"
+    auth_header: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+
+  tasks:
+    # --- STAGE 1: LINK VM TO THE SNIPPET (ALREADY OK, BUT SAFE TO RERUN) ---
+    - name: Stage 1 - Assign Custom User Config
+      uri:
+        url: "{{ pve_api_url }}/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "{{ auth_header }}"
+        body_format: json
+        body:
+          cicustom: "user=shared-zfs:snippets/k3s-ssh-fix.yml"
+        status_code: [200]
+        validate_certs: false
+
+    # --- STAGE 2: POWER CYCLE VM ---
+    - name: Stage 2 - Power Cycle VM
+      community.proxmox.proxmox_kvm:
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_host: "192.168.20.20"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        # Changed from 'rebooted' to 'restarted'
+        state: restarted
+
+    # --- STAGE 3: WAIT FOR SSH ---
+    - name: Stage 3 - Wait for SSH Connectivity
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        delay: 20
+        timeout: 300
+      delegate_to: localhost

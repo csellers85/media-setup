@@ -1,0 +1,47 @@
+---
+- name: Reset K3s and Fix Hostnames
+  hosts: k3s_cluster
+  become: true
+  serial: 1  # Doing this one by one prevents etcd quorum chaos
+
+  tasks:
+    # --- STAGE 1: REMOVE GHOST K3S INSTALLS ---
+    - name: Run K3s uninstall script if it exists
+      command: /usr/local/bin/k3s-uninstall.sh
+      args:
+        removes: /usr/local/bin/k3s-uninstall.sh
+      ignore_errors: true
+
+    - name: Remove leftover Rancher directory
+      file:
+        path: /etc/rancher
+        state: absent
+
+    # --- STAGE 2: SET PERSISTENT HOSTNAME ---
+    - name: Set OS hostname to match inventory
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Update /etc/hosts for local resolution
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127.0.1.1'
+        line: "127.0.1.1 {{ inventory_hostname }}"
+
+    # --- STAGE 3: CLEAN CLOUD-INIT ARTIFACTS ---
+    # This prevents Cloud-Init from potentially resetting the name to 'ubuntu' on next boot
+    - name: Ensure hostname is preserved in Cloud-Init
+      lineinfile:
+        path: /etc/cloud/cloud.cfg
+        regexp: '^preserve_hostname:'
+        line: 'preserve_hostname: true'
+
+    # --- STAGE 4: REBOOT ---
+    - name: Reboot to apply all changes
+      reboot:
+        msg: "Rebooting to finalize hostname changes"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: whoami

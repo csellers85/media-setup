@@ -1,0 +1,177 @@
+---
+- name: Infrastructure Provisioning - No-Root UEFI Atomic logic
+  hosts: k3s_cluster
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # --- STAGE 1: CLONE ---
+    - name: Stage 1 - Clone Template
+      community.proxmox.proxmox_kvm:
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_host: "192.168.20.20"
+        node: "pve"
+        clone: "ubuntu-2404-template"
+        newid: "{{ vm_id }}"
+        name: "{{ inventory_hostname }}"
+        target: "{{ pve_node }}"
+        full: true
+        storage: "shared-zfs"
+        timeout: 900
+      throttle: 1
+
+# --- NEW STAGE: DISK RESIZE (INFRASTRUCTURE) ---
+    - name: Stage 1.5 - Resize Virtual Disk to 20GB
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/resize"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          disk: "scsi0"  # Matches your Stage 4 boot order
+          size: "20G"    # This sets the TOTAL size to 20GB
+        validate_certs: false
+
+    # --- STAGE 2: BIOS ---
+    - name: Stage 2 - Set BIOS to OVMF (UEFI)
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          bios: "ovmf"
+          machine: "q35"
+        validate_certs: false
+
+    # --- STAGE 3: EFI DISK ---
+    - name: Stage 3 - Create EFI Disk
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          efidisk0: "shared-zfs:0,format=raw"
+        validate_certs: false
+
+    # --- STAGE 4: BOOT ORDER ---
+    - name: Stage 4 - Force Boot Order
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          boot: "order=scsi0"
+        validate_certs: false
+
+    # --- STAGE 5: NET0 ---
+    - name: Stage 5 - Map Management Bridge
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          net0: "virtio,bridge={{ management_bridge }}"
+        validate_certs: false
+
+    # --- STAGE 6: NET1 ---
+    - name: Stage 6 - Map Storage Bridge
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          net1: "virtio,bridge={{ storage_bridge }}"
+        validate_certs: false
+
+    # --- STAGE 7: CLOUD-INIT TYPE ---
+    - name: Stage 7 - Set Cloud-Init Type to NoCloud
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          citype: nocloud
+        validate_certs: false
+
+    # --- STAGE 8: CLOUD-INIT SNIPPET ---
+    - name: Stage 8 - Link Custom User Snippet
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/config"
+        method: PUT
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: form-urlencoded
+        body:
+          cicustom: "user=shared-zfs:snippets/k3s-guest-agent.yml"
+        validate_certs: false
+
+    # --- STAGE 9: CLOUD-INIT NETWORK/SSH ---
+    - name: Stage 9 - Apply IP and SSH Keys
+      community.proxmox.proxmox_kvm:
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_host: "192.168.20.20"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        update: true
+        agent: 1
+        ipconfig:
+          ipconfig0: "ip={{ mgmt_ip }}/24,gw=192.168.20.1"
+          ipconfig1: "ip={{ storage_ip }}/24"
+        sshkeys: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    # --- STAGE 10: POWER ON ---
+    - name: Stage 10 - Start VM
+      community.proxmox.proxmox_kvm:
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_host: "192.168.20.20"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        state: started
+
+    # --- STAGE 11: AGENT WAIT ---
+    - name: Stage 11 - Wait for Guest Agent
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/agent/info"
+        method: GET
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        validate_certs: false
+      register: agent_res
+      until: agent_res.status == 200
+      retries: 50
+      delay: 15
+      ignore_errors: true
+
+    # --- STAGE 12: CONSOLE LOGS ---
+    - name: Stage 12 - Get Boot Status
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/vncproxy"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        validate_certs: false
+      register: console_data
+
+    # --- STAGE 13: DEBUG ---
+    - name: Stage 13 - Final Print
+      debug:
+        msg: "Provisioning cycle complete for {{ inventory_hostname }}"

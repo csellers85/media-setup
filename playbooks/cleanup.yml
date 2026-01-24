@@ -1,0 +1,26 @@
+---
+- name: Brute Force Purge K3s Cluster
+  hosts: k3s_cluster
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Purge VMs via API
+      community.proxmox.proxmox_kvm:
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        api_host: "192.168.20.20"  # This node manages the cluster requests
+        node: "{{ pve_node }}"     # The node where the VM physically sits
+        vmid: "{{ vm_id }}"
+        state: absent              # This is the "Delete" command
+        purge: true                # Remove the disks
+        force: true                # Kill it if it's running
+        skiplock: true             # VERY IMPORTANT: Removes the VM even if it's "Locked"
+      register: purge_res
+      # We ignore errors so the playbook keeps going through all 6 VMs
+      ignore_errors: true
+
+    - name: Debug Output
+      debug:
+        msg: "Attempted to purge {{ inventory_hostname }} (ID: {{ vm_id }}) from {{ pve_node }}"

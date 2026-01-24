@@ -1,0 +1,39 @@
+---
+- name: Diagnostic - Read Back Injected Keys
+  hosts: k3s_cluster
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # --- STAGE 1: CHECK FILE CONTENT ---
+    - name: Stage 1 - Read authorized_keys content
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/agent/exec"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: json
+        body:
+          command: ["cat", "/home/ubuntu/.ssh/authorized_keys"]
+        validate_certs: false
+      register: cat_out
+
+    # --- STAGE 2: CHECK PERMISSIONS ---
+    - name: Stage 2 - Check directory and file permissions
+      uri:
+        url: "https://192.168.20.20:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ vm_id }}/agent/exec"
+        method: POST
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        body_format: json
+        body:
+          command: ["ls", "-laR", "/home/ubuntu/.ssh"]
+        validate_certs: false
+      register: ls_out
+
+    # --- STAGE 3: OUTPUT RESULTS ---
+    - name: Stage 3 - Print Diagnostics
+      debug:
+        msg: 
+          - "File Content: {{ cat_out.json.data.out_data | default('EMPTY') }}"
+          - "Directory Stats: {{ ls_out.json.data.out_data | default('EMPTY') }}"
